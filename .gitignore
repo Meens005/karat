@@ -1,0 +1,14 @@
+# Ignore raw large data
+data/raw/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore virtual environments
+venv/
+.env/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
