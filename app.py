@@ -34,8 +34,6 @@ try:
     historical_df['Date'] = pd.to_datetime(historical_df['Date'])
     historical_df.set_index('Date', inplace=True)
     
-    # Calibration: Find the ratio between global (USD) and local (INR) prices
-    # We use a historical point or a fixed conversion factor based on the CSV's magnitude
     last_csv_gold = historical_df['Gold_Close'].iloc[-1]
     last_csv_usdidx = historical_df['USD_Close'].iloc[-1]
     
@@ -54,7 +52,7 @@ def fetch_live_data():
     """
     global last_csv_gold, historical_df
     
-    # 1. Use the most recent historical context (last 30 days of CSV)
+    # 1. Use the most recent historical context (last 60 days of CSV)
     baseline_df = historical_df.tail(60).copy()
     
     # 2. Fetch today's live price for bridging the gap
@@ -64,14 +62,12 @@ def fetch_live_data():
         
         if not gold_live.empty and not usd_live.empty:
             # 3. Scientific Conversion (Global USD/oz -> Local INR/10g 24k)
-            # Fetch live USDINR exchange rate
             try:
                 usdinr_data = yf.download("USDINR=X", period="1d")
                 usd_inr_rate = float(usdinr_data['Close'].iloc[-1])
             except:
                 usd_inr_rate = 85.0 # Fallback
                 
-            # Bridge live data
             current_gold_usd = gold_live['Close']
             if isinstance(current_gold_usd, pd.DataFrame): 
                 current_gold_usd = current_gold_usd.iloc[:, 0]
@@ -92,23 +88,22 @@ def fetch_live_data():
                 'USD_Close': calibrated_usd,
                 'avg_sentiment': random.uniform(-0.1, 0.1),
                 'news_count': random.randint(40, 120),
-                '7day_MA': 0, '30day_MA': 0, 'USD_7day_MA': 0
+                'gold_ma7': 0, 'gold_ma30': 0, 'usd_ma7': 0
             }
             new_df = pd.DataFrame([new_row], index=[new_date])
             baseline_df = pd.concat([baseline_df, new_df])
             
             # Recalculate MAs including the live point
-            baseline_df['7day_MA'] = baseline_df['Gold_Close'].rolling(window=7).mean()
-            baseline_df['30day_MA'] = baseline_df['Gold_Close'].rolling(window=30).mean()
-            baseline_df['USD_7day_MA'] = baseline_df['USD_Close'].rolling(window=7).mean()
+            baseline_df['gold_ma7'] = baseline_df['Gold_Close'].rolling(window=7).mean()
+            baseline_df['gold_ma30'] = baseline_df['Gold_Close'].rolling(window=30).mean()
+            baseline_df['usd_ma7'] = baseline_df['USD_Close'].rolling(window=7).mean()
             
     except Exception as e:
         print(f"Warning: Could not fetch real-time update: {e}")
-        # Fallback to pure CSV if internet fails
         pass
 
     df = baseline_df.dropna().tail(30)
-    return df[['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', '7day_MA', '30day_MA', 'USD_7day_MA']]
+    return df[['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', 'gold_ma7', 'gold_ma30', 'usd_ma7']]
 
 
 @app.get("/")
@@ -127,7 +122,6 @@ def get_current_price():
         last_row = df.iloc[-1]
         price_10g_24k = float(last_row["Gold_Close"])
         # Kerala Standard: 8g (1 Pavan) of 22k Gold
-        # Conversion: 24k -> 22k is ~0.916, 10g -> 8g is 0.8
         price_pavan_22k = price_10g_24k * 0.8 * 0.916
         
         return {
@@ -144,21 +138,18 @@ def get_current_price():
 @app.get("/history")
 def get_history(days: int = 30):
     """
-    Returns historical gold prices for charts. Only up to 60 days are fetched efficiently 
-    with the current fetch_live_data mechanism but we'll adapt.
+    Returns historical gold prices for charts.
     """
     if days < 1 or days > 1000:
          raise HTTPException(status_code=400, detail="days must be between 1 and 1000.")
     try:
-        # Fetch longer history directly
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days + int(days * 0.5) + 10) # add buffer for weekends
+        start_date = end_date - timedelta(days=days + int(days * 0.5) + 10)
         gold_data = yf.download("GC=F", start=start_date, end=end_date)
         
         if gold_data.empty:
             raise HTTPException(status_code=500, detail="Could not fetch data from Yahoo Finance.")
         
-        # Use the local CSV for historical data
         df = historical_df.tail(days).copy()
         
         history_list = []
@@ -191,11 +182,10 @@ def predict_gold_price(days_ahead: int = 1):
         features_df = fetch_live_data()
         
         if len(features_df) < 30:
-            print("Error: Could not retrieve enough live data points.")
             raise HTTPException(status_code=500, detail="Could not retrieve enough live data points.")
 
-        # Ensure strict column order for the scaler
-        feature_cols = ['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', '7day_MA', '30day_MA', 'USD_7day_MA']
+        # Ensure strict column order matching training
+        feature_cols = ['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', 'gold_ma7', 'gold_ma30', 'usd_ma7']
         current_df = features_df[feature_cols].copy()
         
         predicted_prices = []
@@ -204,12 +194,9 @@ def predict_gold_price(days_ahead: int = 1):
             # 1. Scale input
             scaled_data = scaler.transform(current_df.values)
             
-            # 2. Predict
-            # The model expects 4 features, but the scaler provides 7.
-            # We take the first 4 features (Gold, USD, Sentiment, News).
+            # 2. Reshape and predict using all 7 features
             X_input = scaled_data.reshape(1, 30, 7).astype('float32')
-            X_input_sliced = X_input[:, :, :4] # Slice to 4 features
-            scaled_prediction = model(X_input_sliced, training=False)
+            scaled_prediction = model(X_input, training=False)
             scaled_prediction = scaled_prediction.numpy()
             
             # 3. Inverse transform (requires 7 columns)
@@ -232,9 +219,9 @@ def predict_gold_price(days_ahead: int = 1):
             
             # Append and update moving averages
             current_df = pd.concat([current_df, new_row_df], ignore_index=True)
-            current_df['7day_MA'] = current_df['Gold_Close'].rolling(window=7).mean()
-            current_df['30day_MA'] = current_df['Gold_Close'].rolling(window=30).mean()
-            current_df['USD_7day_MA'] = current_df['USD_Close'].rolling(window=7).mean()
+            current_df['gold_ma7'] = current_df['Gold_Close'].rolling(window=7).mean()
+            current_df['gold_ma30'] = current_df['Gold_Close'].rolling(window=30).mean()
+            current_df['usd_ma7'] = current_df['USD_Close'].rolling(window=7).mean()
             
             # Maintain last 30 days
             current_df = current_df.tail(30)
