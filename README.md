@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-Updated preprocessing setup
-=======
 
 ## Frontend Setup (Flutter)
 
