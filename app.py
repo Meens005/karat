@@ -25,8 +25,12 @@ app.add_middleware(
 
 # Load model and data
 try:
+    
+    import pickle
+    import joblib
     model = load_model("data/processed/gold_lstm_model_v2.keras")
-    scaler = joblib.load("data/processed/scaler.save")
+    with open("data/processed/scaler.pkl", "rb") as f:
+        scaler = pickle.load(f)
 
     csv_path = "data/processed/gold_lstm_features_engineered.csv"
     historical_df = pd.read_csv(csv_path)
@@ -41,11 +45,11 @@ try:
     historical_df.set_index('Date', inplace=True)
 
 except Exception as e:
-    print(f"Error loading project resources: {e}")
+    import traceback
+    traceback.print_exc()
     model = None
     scaler = None
     historical_df = pd.DataFrame()
-
 
 def fetch_live_data():
     baseline_df = historical_df.copy()
@@ -161,24 +165,17 @@ def predict(days_ahead: int = 1):
         scaled = scaler.transform(last_60)
 
         X = scaled.reshape(1, 60, 7).astype('float32')
-        pred_scaled = model(X, training=False).numpy()
+        pred_scaled = model(X, training=False).numpy()  # shape (1, 30)
 
+        # inverse transform day 1 prediction
         dummy = np.zeros((1, 7))
-        dummy[0, 0] = pred_scaled[0][0]
-
+        dummy[0, 0] = pred_scaled[0][0]  # first of 30 days
         pred = scaler.inverse_transform(dummy)[0, 0]
         preds.append(float(pred))
 
         last_row = current_df.iloc[-1]
-
-        new_row = [
-            pred,
-            last_row['USD_Close'],
-            last_row['avg_sentiment'],
-            last_row['news_count'],
-            0, 0, 0
-        ]
-
+        new_row = [pred, last_row['USD_Close'], last_row['avg_sentiment'],
+                   last_row['news_count'], 0, 0, 0]
         new_df = pd.DataFrame([new_row], columns=cols)
         current_df = pd.concat([current_df, new_df], ignore_index=True)
 
