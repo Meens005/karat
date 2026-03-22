@@ -1,6 +1,6 @@
 // lib/core/constants.dart
 
-const String kBaseUrl = 'http:// 192.168.1.4:8000';;
+const String kBaseUrl = 'http://127.0.0.1:8000';
 
 const String kAppName = 'Gold Predictor';
 

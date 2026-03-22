@@ -14,6 +14,6 @@ class GoldHistoryEntry {
       GoldHistoryEntry(
         date: DateTime.parse(json['date']),
         price10g24k: (json['gold_price_10g_24k'] as num).toDouble(),
-        pricePavan: (json['kerala_gold_pavan_22k'] as num).toDouble(),
+        pricePavan: (json['kerala_pavan_22k'] as num).toDouble(),
       );
 }

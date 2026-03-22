@@ -12,7 +12,7 @@ class GoldCurrent {
 
   factory GoldCurrent.fromJson(Map<String, dynamic> json) => GoldCurrent(
         price10g24k: (json['gold_price_10g_24k'] as num).toDouble(),
-        pricePavan: (json['kerala_gold_pavan_22k'] as num).toDouble(),
+        pricePavan: (json['kerala_pavan_22k'] as num).toDouble(),
         usdPrice: (json['usd_price'] as num).toDouble(),
       );
 }

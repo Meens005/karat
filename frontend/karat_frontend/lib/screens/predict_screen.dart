@@ -84,8 +84,8 @@ class _PredictScreenState extends State<PredictScreen> {
                 Slider(
                   value: _daysAhead.toDouble(),
                   min: 1,
-                  max: 30,
-                  divisions: 29,
+                  max: 60,
+                  divisions: 59,
                   activeColor: AppTheme.gold,
                   inactiveColor: AppTheme.surface,
                   onChanged: (v) => setState(() => _daysAhead = v.toInt()),
@@ -94,7 +94,7 @@ class _PredictScreenState extends State<PredictScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text('Tomorrow', style: GoogleFonts.dmSans(color: Colors.grey, fontSize: 11)),
-                    Text('30 days', style: GoogleFonts.dmSans(color: Colors.grey, fontSize: 11)),
+                    Text('60 days', style: GoogleFonts.dmSans(color: Colors.grey, fontSize: 11)),
                   ],
                 ),
               ],
@@ -180,7 +180,7 @@ class _PredictScreenState extends State<PredictScreen> {
             // 24K card
             _resultCard(
               label: '24K Gold / 10g',
-              value: '₹${_result!.prediction10g24k.toStringAsFixed(2)}',
+              value: '₹${_result!.prediction10g.toStringAsFixed(2)}',
               sublabel: 'International purity • predicted price',
               color: AppTheme.gold,
               icon: Icons.diamond_outlined,

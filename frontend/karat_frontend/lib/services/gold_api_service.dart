@@ -38,8 +38,12 @@ class GoldApiService {
 
   // ── Prediction (single target day) ───────────────────
   static Future<GoldPrediction> fetchPrediction(int daysAhead) async {
-    final res = await http.get(Uri.parse('$kBaseUrl/predict?days_ahead=$daysAhead'));
-    if (res.statusCode == 200) return GoldPrediction.fromJson(jsonDecode(res.body));
+    final res = await http.get(
+      Uri.parse('$kBaseUrl/predict?days_ahead=$daysAhead'),
+    );
+    if (res.statusCode == 200) {
+      return GoldPrediction.fromJson(jsonDecode(res.body), daysAhead);
+    }
     throw Exception('Failed to fetch prediction');
   }
 }

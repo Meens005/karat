@@ -7,6 +7,20 @@ import joblib
 import yfinance as yf
 from datetime import datetime, timedelta
 import random
+from pydantic import BaseModel
+
+# ==============================
+# DUMMY USERS
+# ==============================
+USERS = {
+    "admin": "admin",
+    "user@gold.app": "gold1234",
+}
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 
 app = FastAPI(
     title="Gold Price Prediction API",
@@ -28,7 +42,8 @@ try:
     
     import pickle
     import joblib
-    model = load_model("data/processed/gold_lstm_model_v2.keras")
+    #model = load_model("data/processed/gold_lstm_model_v2.keras")
+    model = load_model("data/processed/gold_lstm_model_v2.keras", compile=False)
     with open("data/processed/scaler.pkl", "rb") as f:
         scaler = pickle.load(f)
 
@@ -116,6 +131,28 @@ def fetch_live_data():
 def read_root():
     return {"status": "ok", "message": "Live Gold Price Prediction API is running"}
 
+@app.get("/history")
+def history(days: int = 30):
+    if days < 1 or days > 1000:
+        raise HTTPException(status_code=400, detail="Invalid days")
+
+    try:
+        result = []
+
+        for date, row in historical_df.tail(days).iterrows():
+            price_10g = float(row["Gold_Close"])
+
+            result.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "gold_price_10g_24k": round(price_10g, 2),
+                "kerala_pavan_22k": round(price_10g * 0.8 * 0.916, 2)
+            })
+
+        return {"history": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/current")
 def get_current_price():
@@ -136,6 +173,21 @@ def get_current_price():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/login")
+def login(req: LoginRequest):
+    username = req.username.strip()
+    password = req.password.strip()
+
+    if username in USERS and USERS[username] == password:
+        return {
+            "success": True,
+            "message": "Login successful",
+            "username": username
+        }
+
+    raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 @app.get("/predict")
