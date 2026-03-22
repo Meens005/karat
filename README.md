@@ -89,4 +89,12 @@ The API will be available at `http://127.0.0.1:8000`.
 Swagger docs at `http://127.0.0.1:8000/docs`.
 
 ---
->>>>>>> 92277b6 (updated readme)
+## To export the Android application (.apk)
+```bash
+flutter build apk --release
+```
+Your .apk will be inside:
+```bash
+build/app/outputs/flutter-apk/app-release.apk
+```
+
