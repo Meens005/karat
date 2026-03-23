@@ -111,7 +111,7 @@ flutter run
 - Both 24K and Pavan prices plotted
 
 ### 🔮 Predict Screen
-- Slider to select days ahead (1–30)
+- Slider to select days ahead (1–60)
 - Shows predicted 24K and Pavan prices per day
 - Bar or line chart of prediction trend
 
