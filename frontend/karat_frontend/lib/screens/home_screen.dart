@@ -58,8 +58,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: [
                         const Icon(Icons.wifi_off_rounded, color: Colors.grey, size: 48),
                         const SizedBox(height: 12),
-                        Text('Could not reach server', style: GoogleFonts.dmSans(color: Colors.grey)),
-                        const SizedBox(height: 8),
+                        Text(
+                          'Could not reach server',
+                          style: GoogleFonts.dmSans(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 6),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            'The server may be waking up from sleep.\nPlease wait a moment and retry.',
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.dmSans(color: Colors.grey, fontSize: 13, height: 1.5),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
                         ElevatedButton.icon(
                           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.gold, foregroundColor: Colors.black),
                           onPressed: _load,

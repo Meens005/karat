@@ -9,14 +9,11 @@ import 'screens/predict_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
-  final loggedIn = prefs.getBool('logged_in') ?? false;
-  runApp(GoldPredictorApp(startLoggedIn: loggedIn));
+  runApp(const GoldPredictorApp());
 }
 
 class GoldPredictorApp extends StatelessWidget {
-  final bool startLoggedIn;
-  const GoldPredictorApp({super.key, required this.startLoggedIn});
+  const GoldPredictorApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -24,7 +21,7 @@ class GoldPredictorApp extends StatelessWidget {
       title: 'Gold Predictor',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark(),
-      initialRoute: startLoggedIn ? '/home' : '/login',
+      initialRoute: '/login',
       routes: {
         '/login': (_) => const LoginScreen(),
         '/home': (_) => const MainShell(),
@@ -49,9 +46,48 @@ class _MainShellState extends State<MainShell> {
     PredictScreen(),
   ];
 
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        title: Text('Logout', style: TextStyle(color: Colors.white)),
+        content: Text('Are you sure you want to logout?',
+            style: TextStyle(color: Colors.grey)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Logout', style: TextStyle(color: AppTheme.gold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed('/login');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: Text('Karat'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'Logout',
+            onPressed: _logout,
+          ),
+        ],
+      ),
       body: _screens[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
