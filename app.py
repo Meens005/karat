@@ -5,8 +5,12 @@ import pandas as pd
 from tensorflow.keras.models import load_model
 import joblib
 import yfinance as yf
+import requests
+from bs4 import BeautifulSoup
+import re
 from datetime import datetime, timedelta
 import random
+import pickle
 from pydantic import BaseModel
 
 # ==============================
@@ -39,10 +43,6 @@ app.add_middleware(
 
 # Load model and data
 try:
-    
-    import pickle
-    import joblib
-    #model = load_model("data/processed/gold_lstm_model_v2.keras")
     model = load_model("data/processed/gold_lstm_model_v2.keras", compile=False)
     with open("data/processed/scaler.pkl", "rb") as f:
         scaler = pickle.load(f)
@@ -66,8 +66,70 @@ except Exception as e:
     scaler = None
     historical_df = pd.DataFrame()
 
+
+# ==============================
+# AKGSMA SCRAPER - with 1 hour cache
+# ==============================
+_gold_cache = {"price": None, "fetched_at": None}
+
+def get_precise_gold_price():
+    """Fetch Kerala gold prices from AKGSMA, cached for 1 hour."""
+    global _gold_cache
+
+    if _gold_cache["fetched_at"] and _gold_cache["price"]:
+        age_seconds = (datetime.now() - _gold_cache["fetched_at"]).seconds
+        if age_seconds < 3600:
+            print("[AKGSMA] Returning cached price")
+            return _gold_cache["price"]
+
+    try:
+        import cloudscraper
+        scraper = cloudscraper.create_scraper()
+        r = scraper.get("https://akgsma.com/", timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # DEBUG
+        for tag in soup.find_all("li"):
+            print("[DEBUG]", tag.get_text())
+
+        prices = {}
+        for tag in soup.find_all("li"):
+            text = tag.get_text()
+            if "22K" in text:
+                match = re.search(r'₹\s*([\d,]+)', text)
+                if match:
+                    prices["22k"] = float(match.group(1).replace(",", ""))
+            elif "18K" in text:
+                match = re.search(r'₹\s*([\d,]+)', text)
+                if match:
+                    prices["18k"] = float(match.group(1).replace(",", ""))
+
+        if "22k" in prices:
+            prices["24k"] = round(prices["22k"] / 0.916, 2)
+
+        if prices:
+            _gold_cache["price"] = prices
+            _gold_cache["fetched_at"] = datetime.now()
+            print(f"[AKGSMA] Fetched: 22K=₹{prices['22k']}/g  24K=₹{prices.get('24k')}/g")
+            return prices
+        else:
+            print("[AKGSMA] No prices found in page")
+
+    except Exception as e:
+        print(f"[AKGSMA] Failed: {e}")
+
+    return None
+
+
+# ==============================
+# LIVE DATA FETCH
+# ==============================
 def fetch_live_data():
     baseline_df = historical_df.copy()
+
+    # Fetch gold price once here — reused throughout this function
+    precise_prices = get_precise_gold_price()
 
     try:
         last_date = historical_df.index[-1]
@@ -76,8 +138,8 @@ def fetch_live_data():
 
         if start_date < end_date:
             gold = yf.download("GC=F", start=start_date, end=end_date)
-            usd = yf.download("DX-Y.NYB", start=start_date, end=end_date)
-            inr = yf.download("USDINR=X", start=start_date, end=end_date)
+            usd  = yf.download("DX-Y.NYB", start=start_date, end=end_date)
+            inr  = yf.download("USDINR=X", start=start_date, end=end_date)
 
             def get_close(df):
                 if 'Close' in df:
@@ -114,8 +176,8 @@ def fetch_live_data():
             baseline_df = pd.concat([baseline_df, gap_df])
             baseline_df = baseline_df[~baseline_df.index.duplicated()].sort_index()
 
-        baseline_df['7day_MA'] = baseline_df['Gold_Close'].rolling(7).mean()
-        baseline_df['30day_MA'] = baseline_df['Gold_Close'].rolling(30).mean()
+        baseline_df['7day_MA']    = baseline_df['Gold_Close'].rolling(7).mean()
+        baseline_df['30day_MA']   = baseline_df['Gold_Close'].rolling(30).mean()
         baseline_df['USD_7day_MA'] = baseline_df['USD_Close'].rolling(7).mean()
 
     except Exception as e:
@@ -123,13 +185,23 @@ def fetch_live_data():
 
     df = baseline_df.dropna().tail(60)
 
+    # Override latest Gold_Close with scraped 24K price if available
+    if precise_prices and not df.empty and '24k' in precise_prices:
+        price_10g_24k = precise_prices['24k'] * 10
+        df.loc[df.index[-1], 'Gold_Close'] = price_10g_24k
+        print(f"[LOG] Overriding Gold_Close with AKGSMA 24K price: ₹{price_10g_24k}")
+
     return df[['Gold_Close', 'USD_Close', 'avg_sentiment',
                'news_count', '7day_MA', '30day_MA', 'USD_7day_MA']]
 
 
+# ==============================
+# ROUTES
+# ==============================
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Live Gold Price Prediction API is running"}
+
 
 @app.get("/history")
 def history(days: int = 30):
@@ -138,16 +210,13 @@ def history(days: int = 30):
 
     try:
         result = []
-
         for date, row in historical_df.tail(days).iterrows():
             price_10g = float(row["Gold_Close"])
-
             result.append({
                 "date": date.strftime("%Y-%m-%d"),
                 "gold_price_10g_24k": round(price_10g, 2),
                 "kerala_pavan_22k": round(price_10g * 0.8 * 0.916, 2)
             })
-
         return {"history": result}
 
     except Exception as e:
@@ -157,13 +226,23 @@ def history(days: int = 30):
 @app.get("/current")
 def get_current_price():
     try:
+        # get_precise_gold_price() is called inside fetch_live_data() already.
+        # Calling it again here hits the cache (no extra API call).
         df = fetch_live_data()
         if df.empty:
             raise HTTPException(status_code=500, detail="No data available")
 
         last = df.iloc[-1]
         price_10g = float(last["Gold_Close"])
+
+        # Default pavan via formula
         pavan = price_10g * 0.8 * 0.916
+
+        # Override with AKGSMA 22K price if available (cache hit — free)
+        precise_prices = get_precise_gold_price()
+        if precise_prices and '22k' in precise_prices:
+            pavan = precise_prices['22k'] * 8  # 8 grams = 1 pavan
+            print(f"[LOG] Pavan overridden with AKGSMA 22K price: ₹{pavan}")
 
         return {
             "gold_price_10g_24k": round(price_10g, 2),
@@ -217,11 +296,10 @@ def predict(days_ahead: int = 1):
         scaled = scaler.transform(last_60)
 
         X = scaled.reshape(1, 60, 7).astype('float32')
-        pred_scaled = model(X, training=False).numpy()  # shape (1, 30)
+        pred_scaled = model(X, training=False).numpy()
 
-        # inverse transform day 1 prediction
         dummy = np.zeros((1, 7))
-        dummy[0, 0] = pred_scaled[0][0]  # first of 30 days
+        dummy[0, 0] = pred_scaled[0][0]
         pred = scaler.inverse_transform(dummy)[0, 0]
         preds.append(float(pred))
 
@@ -231,8 +309,8 @@ def predict(days_ahead: int = 1):
         new_df = pd.DataFrame([new_row], columns=cols)
         current_df = pd.concat([current_df, new_df], ignore_index=True)
 
-        current_df.loc[current_df.index[-1], '7day_MA'] = current_df['Gold_Close'].tail(7).mean()
-        current_df.loc[current_df.index[-1], '30day_MA'] = current_df['Gold_Close'].tail(30).mean()
+        current_df.loc[current_df.index[-1], '7day_MA']    = current_df['Gold_Close'].tail(7).mean()
+        current_df.loc[current_df.index[-1], '30day_MA']   = current_df['Gold_Close'].tail(30).mean()
         current_df.loc[current_df.index[-1], 'USD_7day_MA'] = current_df['USD_Close'].tail(7).mean()
 
         current_df = current_df.tail(60)
@@ -241,3 +319,8 @@ def predict(days_ahead: int = 1):
         "predictions_10g": [round(p, 2) for p in preds],
         "predictions_pavan": [round(p * 0.8 * 0.916, 2) for p in preds]
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
