@@ -14,6 +14,7 @@ pydantic==1.10.13
 
 # Data
 yfinance==0.2.37
+cloudscraper==1.2.71
 
 # Optional (useful)
 python-multipart==0.0.9
