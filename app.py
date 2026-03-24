@@ -5,8 +5,26 @@ import pandas as pd
 from tensorflow.keras.models import load_model
 import joblib
 import yfinance as yf
+import requests
+from bs4 import BeautifulSoup
+import re
 from datetime import datetime, timedelta
 import random
+import pickle
+from pydantic import BaseModel
+
+# ==============================
+# DUMMY USERS
+# ==============================
+USERS = {
+    "admin": "admin",
+    "user@gold.app": "gold1234",
+}
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 
 app = FastAPI(
     title="Gold Price Prediction API",
@@ -23,220 +41,286 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Load the model, scaler, and historical CSV baseline
+# Load model and data
 try:
-    model = load_model("data/processed/gold_lstm_model.h5")
-    scaler = joblib.load("data/processed/scaler.save")
-    # Load historical data to align scales
+    model = load_model("data/processed/gold_lstm_model_v2.keras", compile=False)
+    with open("data/processed/scaler.pkl", "rb") as f:
+        scaler = pickle.load(f)
+
     csv_path = "data/processed/gold_lstm_features_engineered.csv"
     historical_df = pd.read_csv(csv_path)
-    historical_df.columns = historical_df.columns.str.strip() # Clean names
+    historical_df.columns = historical_df.columns.str.strip()
+
+    historical_df.rename(columns={
+        'Gold_7day_MA': '7day_MA',
+        'Gold_30day_MA': '30day_MA'
+    }, inplace=True)
+
     historical_df['Date'] = pd.to_datetime(historical_df['Date'])
     historical_df.set_index('Date', inplace=True)
-    
-    last_csv_gold = historical_df['Gold_Close'].iloc[-1]
-    last_csv_usdidx = historical_df['USD_Close'].iloc[-1]
-    
+
 except Exception as e:
-    print(f"Error loading project resources: {e}")
+    import traceback
+    traceback.print_exc()
     model = None
     scaler = None
     historical_df = pd.DataFrame()
-    last_csv_gold = 0
-    last_csv_usdidx = 0
 
-def fetch_live_data():
-    """
-    Fetches live data and aligns it with the CSV scale (calibration).
-    Uses the historical CSV as the base and appends the latest live data point.
-    """
-    global last_csv_gold, historical_df
-    
-    # 1. Use the most recent historical context (last 60 days of CSV)
-    baseline_df = historical_df.tail(60).copy()
-    
-    # 2. Fetch today's live price for bridging the gap
+
+# ==============================
+# AKGSMA SCRAPER - with 1 hour cache
+# ==============================
+_gold_cache = {"price": None, "fetched_at": None}
+
+def get_precise_gold_price():
+    """Fetch Kerala gold prices from AKGSMA, cached for 1 hour."""
+    global _gold_cache
+
+    if _gold_cache["fetched_at"] and _gold_cache["price"]:
+        age_seconds = (datetime.now() - _gold_cache["fetched_at"]).seconds
+        if age_seconds < 3600:
+            print("[AKGSMA] Returning cached price")
+            return _gold_cache["price"]
+
     try:
-        gold_live = yf.download("GC=F", period="1d")
-        usd_live = yf.download("DX=F", period="1d")
-        
-        if not gold_live.empty and not usd_live.empty:
-            # 3. Scientific Conversion (Global USD/oz -> Local INR/10g 24k)
-            try:
-                usdinr_data = yf.download("USDINR=X", period="1d")
-                usd_inr_rate = float(usdinr_data['Close'].iloc[-1])
-            except:
-                usd_inr_rate = 85.0 # Fallback
-                
-            current_gold_usd = gold_live['Close']
-            if isinstance(current_gold_usd, pd.DataFrame): 
-                current_gold_usd = current_gold_usd.iloc[:, 0]
-            current_gold_usd = float(current_gold_usd.iloc[-1])
-            
-            current_usd_val = usd_live['Close']
-            if isinstance(current_usd_val, pd.DataFrame):
-                current_usd_val = current_usd_val.iloc[:, 0]
-            current_usd_val = float(current_usd_val.iloc[-1])
-            
-            # Formula: (USD/oz / 31.1035) * USDINR * 10
-            calibrated_gold = (current_gold_usd / 31.1035) * usd_inr_rate * 10
-            calibrated_usd = current_usd_val
-            
-            new_date = datetime.now()
-            new_row = {
-                'Gold_Close': calibrated_gold,
-                'USD_Close': calibrated_usd,
-                'avg_sentiment': random.uniform(-0.1, 0.1),
-                'news_count': random.randint(40, 120),
-                'gold_ma7': 0, 'gold_ma30': 0, 'usd_ma7': 0
-            }
-            new_df = pd.DataFrame([new_row], index=[new_date])
-            baseline_df = pd.concat([baseline_df, new_df])
-            
-            # Recalculate MAs including the live point
-            baseline_df['gold_ma7'] = baseline_df['Gold_Close'].rolling(window=7).mean()
-            baseline_df['gold_ma30'] = baseline_df['Gold_Close'].rolling(window=30).mean()
-            baseline_df['usd_ma7'] = baseline_df['USD_Close'].rolling(window=7).mean()
-            
+        import cloudscraper
+        scraper = cloudscraper.create_scraper()
+        r = scraper.get("https://akgsma.com/", timeout=10)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # DEBUG
+        for tag in soup.find_all("li"):
+            print("[DEBUG]", tag.get_text())
+
+        prices = {}
+        for tag in soup.find_all("li"):
+            text = tag.get_text()
+            if "22K" in text:
+                match = re.search(r'₹\s*([\d,]+)', text)
+                if match:
+                    prices["22k"] = float(match.group(1).replace(",", ""))
+            elif "18K" in text:
+                match = re.search(r'₹\s*([\d,]+)', text)
+                if match:
+                    prices["18k"] = float(match.group(1).replace(",", ""))
+
+        if "22k" in prices:
+            prices["24k"] = round(prices["22k"] / 0.916, 2)
+
+        if prices:
+            _gold_cache["price"] = prices
+            _gold_cache["fetched_at"] = datetime.now()
+            print(f"[AKGSMA] Fetched: 22K=₹{prices['22k']}/g  24K=₹{prices.get('24k')}/g")
+            return prices
+        else:
+            print("[AKGSMA] No prices found in page")
+
     except Exception as e:
-        print(f"Warning: Could not fetch real-time update: {e}")
-        pass
+        print(f"[AKGSMA] Failed: {e}")
 
-    df = baseline_df.dropna().tail(30)
-    return df[['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', 'gold_ma7', 'gold_ma30', 'usd_ma7']]
+    return None
 
 
+# ==============================
+# LIVE DATA FETCH
+# ==============================
+def fetch_live_data():
+    baseline_df = historical_df.copy()
+
+    # Fetch gold price once here — reused throughout this function
+    precise_prices = get_precise_gold_price()
+
+    try:
+        last_date = historical_df.index[-1]
+        start_date = last_date + timedelta(days=1)
+        end_date = datetime.now() + timedelta(days=1)
+
+        if start_date < end_date:
+            gold = yf.download("GC=F", start=start_date, end=end_date)
+            usd  = yf.download("DX-Y.NYB", start=start_date, end=end_date)
+            inr  = yf.download("USDINR=X", start=start_date, end=end_date)
+
+            def get_close(df):
+                if 'Close' in df:
+                    c = df['Close']
+                    return c.iloc[:, 0] if isinstance(c, pd.DataFrame) else c
+                return pd.Series(dtype=float)
+
+            merged = pd.concat([
+                get_close(gold),
+                get_close(usd),
+                get_close(inr)
+            ], axis=1)
+
+            merged.columns = ['gold', 'usd', 'inr']
+            merged.ffill(inplace=True)
+            merged.dropna(inplace=True)
+
+            rows = []
+            for _, row in merged.iterrows():
+                usd_inr = row['inr'] if not pd.isna(row['inr']) else 85.0
+                gold_inr = (row['gold'] / 31.1035) * usd_inr * 10
+
+                rows.append({
+                    'Gold_Close': gold_inr,
+                    'USD_Close': row['usd'],
+                    'avg_sentiment': random.uniform(-0.1, 0.1),
+                    'news_count': random.randint(40, 120),
+                    '7day_MA': 0,
+                    '30day_MA': 0,
+                    'USD_7day_MA': 0
+                })
+
+            gap_df = pd.DataFrame(rows, index=merged.index)
+            baseline_df = pd.concat([baseline_df, gap_df])
+            baseline_df = baseline_df[~baseline_df.index.duplicated()].sort_index()
+
+        baseline_df['7day_MA']    = baseline_df['Gold_Close'].rolling(7).mean()
+        baseline_df['30day_MA']   = baseline_df['Gold_Close'].rolling(30).mean()
+        baseline_df['USD_7day_MA'] = baseline_df['USD_Close'].rolling(7).mean()
+
+    except Exception as e:
+        print(f"Warning: Could not bridge data gap: {e}")
+
+    df = baseline_df.dropna().tail(60)
+
+    # Override latest Gold_Close with scraped 24K price if available
+    if precise_prices and not df.empty and '24k' in precise_prices:
+        price_10g_24k = precise_prices['24k'] * 10
+        df.loc[df.index[-1], 'Gold_Close'] = price_10g_24k
+        print(f"[LOG] Overriding Gold_Close with AKGSMA 24K price: ₹{price_10g_24k}")
+
+    return df[['Gold_Close', 'USD_Close', 'avg_sentiment',
+               'news_count', '7day_MA', '30day_MA', 'USD_7day_MA']]
+
+
+# ==============================
+# ROUTES
+# ==============================
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "Live Gold Price Prediction API is running"}
 
-@app.get("/current")
-def get_current_price():
-    """
-    Returns the most recent available gold price and USD index.
-    """
-    try:
-        df = fetch_live_data()
-        if df.empty:
-             raise HTTPException(status_code=500, detail="Could not retrieve live data points.")
-        last_row = df.iloc[-1]
-        price_10g_24k = float(last_row["Gold_Close"])
-        # Kerala Standard: 8g (1 Pavan) of 22k Gold
-        price_pavan_22k = price_10g_24k * 0.8 * 0.916
-        
-        return {
-            "date": df.index[-1].strftime("%Y-%m-%d"),
-            "gold_price_10g_24k": round(price_10g_24k, 2),
-            "kerala_gold_pavan_22k": round(price_pavan_22k, 2),
-            "usd_price": float(last_row["USD_Close"]),
-            "currency": "INR",
-            "unit": "8 grams (22k)"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching current price: {str(e)}")
 
 @app.get("/history")
-def get_history(days: int = 30):
-    """
-    Returns historical gold prices for charts.
-    """
+def history(days: int = 30):
     if days < 1 or days > 1000:
-         raise HTTPException(status_code=400, detail="days must be between 1 and 1000.")
+        raise HTTPException(status_code=400, detail="Invalid days")
+
     try:
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days + int(days * 0.5) + 10)
-        gold_data = yf.download("GC=F", start=start_date, end=end_date)
-        
-        if gold_data.empty:
-            raise HTTPException(status_code=500, detail="Could not fetch data from Yahoo Finance.")
-        
-        df = historical_df.tail(days).copy()
-        
-        history_list = []
-        for date, row in df.iterrows():
-            price_10g_24k = float(row["Gold_Close"])
-            price_pavan_22k = price_10g_24k * 0.8 * 0.916
-            history_list.append({
+        result = []
+        for date, row in historical_df.tail(days).iterrows():
+            price_10g = float(row["Gold_Close"])
+            result.append({
                 "date": date.strftime("%Y-%m-%d"),
-                "gold_price_10g_24k": round(price_10g_24k, 2),
-                "kerala_gold_pavan_22k": round(price_pavan_22k, 2)
+                "gold_price_10g_24k": round(price_10g, 2),
+                "kerala_pavan_22k": round(price_10g * 0.8 * 0.916, 2)
             })
-        return {"history": history_list, "currency": "INR", "unit": "8 grams (22k)"}
+        return {"history": result}
+
     except Exception as e:
-         raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/predict")
-def predict_gold_price(days_ahead: int = 1):
-    """
-    Predicts the gold price `days_ahead` into the future using recursive forecasting.
-    """
-    import pandas as pd
-    if model is None or scaler is None:
-        raise HTTPException(status_code=500, detail="Model or Scaler not loaded properly.")
-    
-    if days_ahead < 1 or days_ahead > 60:
-         raise HTTPException(status_code=400, detail="days_ahead must be between 1 and 60.")
 
+@app.get("/current")
+def get_current_price():
     try:
-        # Fetch the real 30-day baseline data up to TODAY
-        features_df = fetch_live_data()
-        
-        if len(features_df) < 30:
-            raise HTTPException(status_code=500, detail="Could not retrieve enough live data points.")
+        # get_precise_gold_price() is called inside fetch_live_data() already.
+        # Calling it again here hits the cache (no extra API call).
+        df = fetch_live_data()
+        if df.empty:
+            raise HTTPException(status_code=500, detail="No data available")
 
-        # Ensure strict column order matching training
-        feature_cols = ['Gold_Close', 'USD_Close', 'avg_sentiment', 'news_count', 'gold_ma7', 'gold_ma30', 'usd_ma7']
-        current_df = features_df[feature_cols].copy()
-        
-        predicted_prices = []
+        last = df.iloc[-1]
+        price_10g = float(last["Gold_Close"])
 
-        for i in range(days_ahead):
-            # 1. Scale input
-            scaled_data = scaler.transform(current_df.values)
-            
-            # 2. Reshape and predict using all 7 features
-            X_input = scaled_data.reshape(1, 30, 7).astype('float32')
-            scaled_prediction = model(X_input, training=False)
-            scaled_prediction = scaled_prediction.numpy()
-            
-            # 3. Inverse transform (requires 7 columns)
-            dummy_array = np.zeros((1, 7))
-            dummy_array[0, 0] = scaled_prediction[0][0]
-            real_prediction = scaler.inverse_transform(dummy_array)[0, 0]
-            predicted_price = float(real_prediction)
-            predicted_prices.append(predicted_price)
-            
-            # 4. Prepare new row
-            last_row = current_df.iloc[-1]
-            new_row_data = [
-                predicted_price, 
-                last_row['USD_Close'], 
-                last_row['avg_sentiment'], 
-                last_row['news_count'],
-                0, 0, 0 # Placeholders for MAs
-            ]
-            new_row_df = pd.DataFrame([new_row_data], columns=feature_cols)
-            
-            # Append and update moving averages
-            current_df = pd.concat([current_df, new_row_df], ignore_index=True)
-            current_df['gold_ma7'] = current_df['Gold_Close'].rolling(window=7).mean()
-            current_df['gold_ma30'] = current_df['Gold_Close'].rolling(window=30).mean()
-            current_df['usd_ma7'] = current_df['USD_Close'].rolling(window=7).mean()
-            
-            # Maintain last 30 days
-            current_df = current_df.tail(30)
+        # Default pavan via formula
+        pavan = price_10g * 0.8 * 0.916
 
-        # Convert predictions to Kerala Pavan (8g 22k)
-        pavan_predictions = [round(p * 0.8 * 0.916, 2) for p in predicted_prices]
+        # Override with AKGSMA 22K price if available (cache hit — free)
+        precise_prices = get_precise_gold_price()
+        if precise_prices and '22k' in precise_prices:
+            pavan = precise_prices['22k'] * 8  # 8 grams = 1 pavan
+            print(f"[LOG] Pavan overridden with AKGSMA 22K price: ₹{pavan}")
 
         return {
-            "target_days_ahead": days_ahead,
-            "predictions_10g_24k": [round(p, 2) for p in predicted_prices],
-            "predictions_kerala_pavan_22k": pavan_predictions,
-            "currency": "INR",
-            "unit_pavan": "8 grams (22k)"
+            "gold_price_10g_24k": round(price_10g, 2),
+            "kerala_pavan_22k": round(pavan, 2),
+            "usd_price": float(last["USD_Close"])
         }
+
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/login")
+def login(req: LoginRequest):
+    username = req.username.strip()
+    password = req.password.strip()
+
+    if username in USERS and USERS[username] == password:
+        return {
+            "success": True,
+            "message": "Login successful",
+            "username": username
+        }
+
+    raise HTTPException(status_code=401, detail="Invalid username or password")
+
+
+@app.get("/predict")
+def predict(days_ahead: int = 1):
+    if model is None or scaler is None:
+        raise HTTPException(status_code=500, detail="Model not loaded")
+
+    if not (1 <= days_ahead <= 60):
+        raise HTTPException(status_code=400, detail="Invalid days")
+
+    df = fetch_live_data()
+
+    if len(df) < 60:
+        raise HTTPException(status_code=500, detail="Not enough data")
+
+    cols = [
+        'Gold_Close', 'USD_Close',
+        'avg_sentiment', 'news_count',
+        '7day_MA', '30day_MA', 'USD_7day_MA'
+    ]
+
+    current_df = df[cols].copy()
+    preds = []
+
+    for _ in range(days_ahead):
+        last_60 = current_df.tail(60).values
+        scaled = scaler.transform(last_60)
+
+        X = scaled.reshape(1, 60, 7).astype('float32')
+        pred_scaled = model(X, training=False).numpy()
+
+        dummy = np.zeros((1, 7))
+        dummy[0, 0] = pred_scaled[0][0]
+        pred = scaler.inverse_transform(dummy)[0, 0]
+        preds.append(float(pred))
+
+        last_row = current_df.iloc[-1]
+        new_row = [pred, last_row['USD_Close'], last_row['avg_sentiment'],
+                   last_row['news_count'], 0, 0, 0]
+        new_df = pd.DataFrame([new_row], columns=cols)
+        current_df = pd.concat([current_df, new_df], ignore_index=True)
+
+        current_df.loc[current_df.index[-1], '7day_MA']    = current_df['Gold_Close'].tail(7).mean()
+        current_df.loc[current_df.index[-1], '30day_MA']   = current_df['Gold_Close'].tail(30).mean()
+        current_df.loc[current_df.index[-1], 'USD_7day_MA'] = current_df['USD_Close'].tail(7).mean()
+
+        current_df = current_df.tail(60)
+
+    return {
+        "predictions_10g": [round(p, 2) for p in preds],
+        "predictions_pavan": [round(p * 0.8 * 0.916, 2) for p in preds]
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)

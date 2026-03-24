@@ -1,0 +1,21 @@
+# Core ML (match teammate)
+tensorflow==2.20.0
+keras==3.12.1
+numpy==2.2.6
+pandas==2.3.3
+scikit-learn==1.7.2
+h5py==3.15.1
+joblib==1.5.3
+
+# API
+fastapi==0.110.0
+uvicorn==0.27.1
+pydantic==1.10.13
+
+# Data
+yfinance==0.2.37
+cloudscraper==1.2.71
+
+# Optional (useful)
+python-multipart==0.0.9
+requests==2.32.5

@@ -11,7 +11,7 @@ venv_312/
 .venv/
 .env/
 .env
-
+.env10
 # Ignore OS files
 .DS_Store
 Thumbs.db
