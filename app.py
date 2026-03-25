@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timedelta
 import random
-import pickle
 from pydantic import BaseModel
 
 # ==============================
@@ -29,7 +28,7 @@ class LoginRequest(BaseModel):
 app = FastAPI(
     title="Gold Price Prediction API",
     description="API for predicting the future gold price based on live market data.",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 # CORS setup
@@ -41,29 +40,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model and data
+# ==============================
+# LOAD MODEL & SCALERS
+# ==============================
 try:
-    model = load_model("data/processed/gold_lstm_model_v2.keras", compile=False)
-    with open("data/processed/scaler.pkl", "rb") as f:
-        scaler = pickle.load(f)
+    model = load_model("models/gold_lstm_model.keras", compile=False)
+    feature_scaler = joblib.load("models/feature_scaler.pkl")
+    gold_scaler = joblib.load("models/gold_scaler.pkl")
 
-    csv_path = "data/processed/gold_lstm_features_engineered.csv"
+    csv_path = "data/processed/gold_lstm_features_clean.csv"
     historical_df = pd.read_csv(csv_path)
     historical_df.columns = historical_df.columns.str.strip()
-
-    historical_df.rename(columns={
-        'Gold_7day_MA': '7day_MA',
-        'Gold_30day_MA': '30day_MA'
-    }, inplace=True)
-
     historical_df['Date'] = pd.to_datetime(historical_df['Date'])
     historical_df.set_index('Date', inplace=True)
+
+    print("✅ Model, scalers and data loaded successfully")
 
 except Exception as e:
     import traceback
     traceback.print_exc()
     model = None
-    scaler = None
+    feature_scaler = None
+    gold_scaler = None
     historical_df = pd.DataFrame()
 
 
@@ -88,10 +86,6 @@ def get_precise_gold_price():
         r = scraper.get("https://akgsma.com/", timeout=10)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
-
-        # DEBUG
-        for tag in soup.find_all("li"):
-            print("[DEBUG]", tag.get_text())
 
         prices = {}
         for tag in soup.find_all("li"):
@@ -128,7 +122,6 @@ def get_precise_gold_price():
 def fetch_live_data():
     baseline_df = historical_df.copy()
 
-    # Fetch gold price once here — reused throughout this function
     precise_prices = get_precise_gold_price()
 
     try:
@@ -160,6 +153,7 @@ def fetch_live_data():
             rows = []
             for _, row in merged.iterrows():
                 usd_inr = row['inr'] if not pd.isna(row['inr']) else 85.0
+                # USD per ounce → INR per 10 grams
                 gold_inr = (row['gold'] / 31.1035) * usd_inr * 10
 
                 rows.append({
@@ -167,8 +161,8 @@ def fetch_live_data():
                     'USD_Close': row['usd'],
                     'avg_sentiment': random.uniform(-0.1, 0.1),
                     'news_count': random.randint(40, 120),
-                    '7day_MA': 0,
-                    '30day_MA': 0,
+                    'Gold_7day_MA': 0,
+                    'Gold_30day_MA': 0,
                     'USD_7day_MA': 0
                 })
 
@@ -176,9 +170,10 @@ def fetch_live_data():
             baseline_df = pd.concat([baseline_df, gap_df])
             baseline_df = baseline_df[~baseline_df.index.duplicated()].sort_index()
 
-        baseline_df['7day_MA']    = baseline_df['Gold_Close'].rolling(7).mean()
-        baseline_df['30day_MA']   = baseline_df['Gold_Close'].rolling(30).mean()
-        baseline_df['USD_7day_MA'] = baseline_df['USD_Close'].rolling(7).mean()
+        # Recalculate MAs on full dataset
+        baseline_df['Gold_7day_MA']  = baseline_df['Gold_Close'].rolling(7).mean()
+        baseline_df['Gold_30day_MA'] = baseline_df['Gold_Close'].rolling(30).mean()
+        baseline_df['USD_7day_MA']   = baseline_df['USD_Close'].rolling(7).mean()
 
     except Exception as e:
         print(f"Warning: Could not bridge data gap: {e}")
@@ -192,7 +187,7 @@ def fetch_live_data():
         print(f"[LOG] Overriding Gold_Close with AKGSMA 24K price: ₹{price_10g_24k}")
 
     return df[['Gold_Close', 'USD_Close', 'avg_sentiment',
-               'news_count', '7day_MA', '30day_MA', 'USD_7day_MA']]
+               'news_count', 'Gold_7day_MA', 'Gold_30day_MA', 'USD_7day_MA']]
 
 
 # ==============================
@@ -226,8 +221,6 @@ def history(days: int = 30):
 @app.get("/current")
 def get_current_price():
     try:
-        # get_precise_gold_price() is called inside fetch_live_data() already.
-        # Calling it again here hits the cache (no extra API call).
         df = fetch_live_data()
         if df.empty:
             raise HTTPException(status_code=500, detail="No data available")
@@ -235,13 +228,11 @@ def get_current_price():
         last = df.iloc[-1]
         price_10g = float(last["Gold_Close"])
 
-        # Default pavan via formula
         pavan = price_10g * 0.8 * 0.916
 
-        # Override with AKGSMA 22K price if available (cache hit — free)
         precise_prices = get_precise_gold_price()
         if precise_prices and '22k' in precise_prices:
-            pavan = precise_prices['22k'] * 8  # 8 grams = 1 pavan
+            pavan = precise_prices['22k'] * 8
             print(f"[LOG] Pavan overridden with AKGSMA 22K price: ₹{pavan}")
 
         return {
@@ -271,7 +262,7 @@ def login(req: LoginRequest):
 
 @app.get("/predict")
 def predict(days_ahead: int = 1):
-    if model is None or scaler is None:
+    if model is None or feature_scaler is None or gold_scaler is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
     if not (1 <= days_ahead <= 60):
@@ -282,36 +273,37 @@ def predict(days_ahead: int = 1):
     if len(df) < 60:
         raise HTTPException(status_code=500, detail="Not enough data")
 
-    cols = [
-        'Gold_Close', 'USD_Close',
-        'avg_sentiment', 'news_count',
-        '7day_MA', '30day_MA', 'USD_7day_MA'
-    ]
+    cols = ['Gold_Close', 'USD_Close', 'avg_sentiment',
+            'news_count', 'Gold_7day_MA', 'Gold_30day_MA', 'USD_7day_MA']
 
     current_df = df[cols].copy()
     preds = []
 
     for _ in range(days_ahead):
         last_60 = current_df.tail(60).values
-        scaled = scaler.transform(last_60)
 
+        # Use feature_scaler for input scaling
+        scaled = feature_scaler.transform(last_60)
         X = scaled.reshape(1, 60, 7).astype('float32')
+
+        # Predict (scaled)
         pred_scaled = model(X, training=False).numpy()
 
-        dummy = np.zeros((1, 7))
-        dummy[0, 0] = pred_scaled[0][0]
-        pred = scaler.inverse_transform(dummy)[0, 0]
-        preds.append(float(pred))
+        # Use gold_scaler for inverse transform
+        pred_price = gold_scaler.inverse_transform(pred_scaled)[0][0]
+        preds.append(float(pred_price))
 
+        # Append predicted row for multi-day prediction
         last_row = current_df.iloc[-1]
-        new_row = [pred, last_row['USD_Close'], last_row['avg_sentiment'],
+        new_row = [pred_price, last_row['USD_Close'], last_row['avg_sentiment'],
                    last_row['news_count'], 0, 0, 0]
         new_df = pd.DataFrame([new_row], columns=cols)
         current_df = pd.concat([current_df, new_df], ignore_index=True)
 
-        current_df.loc[current_df.index[-1], '7day_MA']    = current_df['Gold_Close'].tail(7).mean()
-        current_df.loc[current_df.index[-1], '30day_MA']   = current_df['Gold_Close'].tail(30).mean()
-        current_df.loc[current_df.index[-1], 'USD_7day_MA'] = current_df['USD_Close'].tail(7).mean()
+        # Recalculate MAs
+        current_df.loc[current_df.index[-1], 'Gold_7day_MA']  = current_df['Gold_Close'].tail(7).mean()
+        current_df.loc[current_df.index[-1], 'Gold_30day_MA'] = current_df['Gold_Close'].tail(30).mean()
+        current_df.loc[current_df.index[-1], 'USD_7day_MA']   = current_df['USD_Close'].tail(7).mean()
 
         current_df = current_df.tail(60)
 
