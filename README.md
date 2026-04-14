@@ -164,5 +164,19 @@ flutter run
 * Financial Time Series Prediction
 * Real-world Application
 
+## App Screenshots
+
+
+### App Home UI
+![Home UI](karat_home.jpeg)
+
+### Gold price forecasting Screen
+![Home](forecasting_karat.jpeg)
+
+### Gold Price Graph
+![Graph](graph_karat.jpeg)
+
+### 60-Day Price Forecast
+![Forecast](price_forecast_karat.jpeg)
 
 
