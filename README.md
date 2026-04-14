@@ -1,14 +1,14 @@
-# Gold Price Prediction using LSTM with News Sentiment (Flutter App)
+# Gold Price Prediction App using LSTM (Flutter App)
 
 ## Overview
 
-This project predicts **gold prices using LSTM (Long Short-Term Memory)** by incorporating multiple real-world influencing factors:
+This project predicts **gold prices for the next 60 days** using **LSTM (Long Short-Term Memory)** by incorporating multiple real-world influencing factors:
 
 * Historical Gold Prices
 * USD Exchange Rate
 * News Sentiment Analysis (Novel Feature)
 
-The prediction system is integrated into a **Flutter mobile application** that allows users to view predicted gold prices interactively.
+The prediction system is integrated into a **Flutter mobile application** that allows users to view **future gold price forecasts (60-day prediction)** interactively.
 
 Dataset Range: **2018 – 2026**
 
@@ -23,14 +23,14 @@ This project improves prediction accuracy by including:
 * USD currency fluctuations
 * Market sentiment from financial news
 * Long-term historical data
-
-This creates a more **robust and real-world prediction model**.
+* Multi-feature deep learning prediction
 
 ---
 
 ## Features
 
-* Gold price prediction using LSTM
+* 60-day gold price prediction
+* LSTM deep learning model
 * News sentiment-based prediction
 * USD exchange rate integration
 * Flutter mobile application interface
@@ -95,7 +95,7 @@ The dataset includes:
 
 * LSTM Model
 * Multi-feature input
-* Time-series prediction
+* 60-day future prediction
 
 ### 5. Flutter Integration
 
@@ -119,6 +119,7 @@ requirements.txt → Dependencies
 
 This project introduces:
 
+* 60-day future gold prediction
 * News sentiment as prediction feature
 * Multi-factor gold prediction
 * Mobile-based prediction system
@@ -159,9 +160,9 @@ flutter run
 * Deep Learning (LSTM)
 * NLP Sentiment Analysis
 * Flutter Mobile App
+* 60-Day Future Forecasting
 * Financial Time Series Prediction
 * Real-world Application
 
----
 
 
