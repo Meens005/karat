@@ -1,100 +1,167 @@
+# Gold Price Prediction using LSTM with News Sentiment (Flutter App)
 
-## Frontend Setup (Flutter)
+## Overview
 
-Follow the steps below to run the frontend locally.
+This project predicts **gold prices using LSTM (Long Short-Term Memory)** by incorporating multiple real-world influencing factors:
 
----
+* Historical Gold Prices
+* USD Exchange Rate
+* News Sentiment Analysis (Novel Feature)
 
-### Prerequisites
+The prediction system is integrated into a **Flutter mobile application** that allows users to view predicted gold prices interactively.
 
-Make sure you have the following installed:
-
-- [Flutter SDK](https://docs.flutter.dev/get-started/install)
-- [Android Studio](https://developer.android.com/studio) (with emulator or physical device setup)
-
----
-
-### 1. Create a New Flutter Project
-
-Run the following command in any directory (preferably outside this repo):
-```bash
-flutter create project_name
-cd project_name
-```
+Dataset Range: **2018 – 2026**
 
 ---
 
-### 2. Replace the Default Code
+## Problem Statement
 
-- Navigate to your new project folder
-- Replace the generated `lib/` folder with the one from this repository:
-```
-karat_frontend/lib  →  your_project/lib
-```
+Gold prices are influenced by various economic, political, and global events. Traditional prediction models rely only on historical price data.
 
----
+This project improves prediction accuracy by including:
 
-### 3. Update Dependencies
+* USD currency fluctuations
+* Market sentiment from financial news
+* Long-term historical data
 
-Replace the `pubspec.yaml` in your project with the one provided in this repo:
-```
-karat_frontend/pubspec.yaml  →  your_project/pubspec.yaml
-```
+This creates a more **robust and real-world prediction model**.
 
 ---
 
-### 4. Configure Backend URL
+## Features
 
-Open `lib/core/constants.dart` and set `kBaseUrl` to match your environment:
-```dart
-// Android Emulator
-const String kBaseUrl = 'http://10.0.2.2:8000';
-
-// Physical Device (same WiFi)
-const String kBaseUrl = 'http://192.168.x.x:8000';
-
-// Chrome / Web
-const String kBaseUrl = 'http://127.0.0.1:8000';
-```
+* Gold price prediction using LSTM
+* News sentiment-based prediction
+* USD exchange rate integration
+* Flutter mobile application interface
+* Real-world financial forecasting
+* Multi-feature time-series prediction
 
 ---
 
-### 5. Install Packages
-```bash
+## Tech Stack
+
+### Machine Learning
+
+* Python
+* TensorFlow / Keras
+* Pandas
+* NumPy
+* Scikit-learn
+* Matplotlib
+
+### Mobile Application
+
+* Flutter
+* Dart
+
+### Data Processing
+
+* NLP Sentiment Analysis
+* Time Series Forecasting
+
+---
+
+## Dataset
+
+The dataset includes:
+
+* Gold prices (2018–2026)
+* USD exchange rates (2018–2026)
+* News sentiment scores
+
+---
+
+## Methodology
+
+### 1. Data Collection
+
+* Historical gold price data
+* USD exchange rate data
+* Financial news data
+
+### 2. Data Preprocessing
+
+* Handling missing values
+* Normalization
+* Time-series formatting
+
+### 3. Sentiment Analysis
+
+* News sentiment scoring
+* Integration with dataset
+
+### 4. Model Training
+
+* LSTM Model
+* Multi-feature input
+* Time-series prediction
+
+### 5. Flutter Integration
+
+* Backend prediction API
+* Mobile UI for predictions
+
+---
+
+## Project Structure
+
+data/ → Dataset files
+models/ → Trained LSTM models
+notebooks/ → Model training notebooks
+frontend/ → Flutter mobile app
+app.py → Backend prediction API
+requirements.txt → Dependencies
+
+---
+
+## Key Innovation
+
+This project introduces:
+
+* News sentiment as prediction feature
+* Multi-factor gold prediction
+* Mobile-based prediction system
+* Long-term dataset (2018–2026)
+
+---
+
+## Future Improvements
+
+* Real-time news scraping
+* Live gold price prediction
+* Cloud deployment
+* Enhanced UI dashboard
+
+---
+
+## How to Run
+
+### Backend
+
+git clone https://github.com/Meens005/karat.git
+cd karat
+pip install -r requirements.txt
+python app.py
+
+---
+
+### Flutter App
+
+cd frontend
 flutter pub get
-```
-
----
-
-### 6. Run the App
-```bash
 flutter run
-```
 
 ---
 
-## Backend Setup (FastAPI)
+## Why This Project Stands Out
 
-### 1. Install Dependencies
-```bash
-pip install fastapi uvicorn yfinance tensorflow joblib pandas
-```
-
-### 2. Start the Server
-```bash
-uvicorn app:app --reload
-```
-
-The API will be available at `http://127.0.0.1:8000`.
-Swagger docs at `http://127.0.0.1:8000/docs`.
+* Deep Learning (LSTM)
+* NLP Sentiment Analysis
+* Flutter Mobile App
+* Financial Time Series Prediction
+* Real-world Application
 
 ---
-## To export the Android application (.apk)
-```bash
-flutter build apk --release
-```
-Your .apk will be inside:
-```bash
-build/app/outputs/flutter-apk/app-release.apk
-```
+
 
