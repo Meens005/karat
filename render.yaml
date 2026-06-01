@@ -3,19 +3,19 @@ services:
     name: gold-predictor-api
     env: python
     plan: free
-
     buildCommand: |
       pip install -r requirements.txt
-
     startCommand: |
       gunicorn main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
-
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.13
-
       - key: PORT
         value: 10000
-
       - key: ENV
         value: production
+
+  - type: static
+    name: karatweb
+    buildCommand: ""
+    staticPublishPath: docs
