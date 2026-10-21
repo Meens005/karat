@@ -8,9 +8,9 @@ h5py==3.15.1
 joblib==1.5.3
 
 # API
-fastapi==0.110.0
+fastapi>=0.115
 uvicorn==0.27.1
-pydantic==1.10.13
+pydantic>=2.9
 
 # Data
 yfinance==0.2.37
