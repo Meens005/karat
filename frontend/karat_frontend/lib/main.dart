@@ -4,7 +4,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-import 'screens/history_screen.dart';
 import 'screens/predict_screen.dart';
 
 void main() async {
@@ -42,7 +41,6 @@ class _MainShellState extends State<MainShell> {
 
   final List<Widget> _screens = const [
     HomeScreen(),
-    HistoryScreen(),
     PredictScreen(),
   ];
 
@@ -96,10 +94,6 @@ class _MainShellState extends State<MainShell> {
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart_rounded),
             label: 'Today',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.history_rounded),
-            label: 'History',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.auto_graph_rounded),

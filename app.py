@@ -198,26 +198,6 @@ def read_root():
     return {"status": "ok", "message": "Live Gold Price Prediction API is running"}
 
 
-@app.get("/history")
-def history(days: int = 30):
-    if days < 1 or days > 1000:
-        raise HTTPException(status_code=400, detail="Invalid days")
-
-    try:
-        result = []
-        for date, row in historical_df.tail(days).iterrows():
-            price_10g = float(row["Gold_Close"])
-            result.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "gold_price_10g_24k": round(price_10g, 2),
-                "kerala_pavan_22k": round(price_10g * 0.8 * 0.916, 2)
-            })
-        return {"history": result}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/current")
 def get_current_price():
     try:
