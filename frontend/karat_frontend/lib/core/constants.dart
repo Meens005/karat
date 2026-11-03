@@ -1,6 +1,6 @@
 // lib/core/constants.dart
 
-const String kBaseUrl = 'https://karat-yebv.onrender.com';
+const String kBaseUrl = 'https://karat-app-fr2s.onrender.com';
 
 const String kAppName = 'Gold Predictor';
 
