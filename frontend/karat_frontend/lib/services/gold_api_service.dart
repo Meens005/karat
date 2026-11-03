@@ -1,4 +1,5 @@
 // lib/services/gold_api_service.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
@@ -18,8 +19,11 @@ class GoldApiService {
           .timeout(_timeout);
     } on SocketException {
       throw Exception('No internet connection');
+    } on TimeoutException {
+      throw Exception('Server timed out after ${_timeout.inSeconds}s (cold start or slow backend). Retry once.');
     } catch (e) {
-      throw Exception('Connection failed. Server may be waking up, please retry in a moment.');
+      // On Flutter web this is usually a CORS/network failure, e.g. the server crashed or returned 502.
+      throw Exception('Could not reach server: $e');
     }
   }
 
@@ -70,6 +74,6 @@ class GoldApiService {
     if (res.statusCode == 200) {
       return GoldPrediction.fromJson(jsonDecode(res.body), daysAhead);
     }
-    throw Exception('Failed to fetch prediction');
+    throw Exception('Prediction failed (HTTP ${res.statusCode}): ${res.body}');
   }
 }

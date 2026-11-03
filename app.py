@@ -119,7 +119,21 @@ def get_precise_gold_price():
 # ==============================
 # LIVE DATA FETCH
 # ==============================
+_live_cache = {"df": None, "at": None}
+
 def fetch_live_data():
+    """Cached wrapper: Yahoo/AKGSMA are slow on Render, so refresh at most every 30 min."""
+    if _live_cache["df"] is not None and _live_cache["at"] is not None:
+        if (datetime.now() - _live_cache["at"]).total_seconds() < 1800:
+            return _live_cache["df"].copy()
+    df = _build_live_data()
+    if df is not None and len(df) >= 60:
+        _live_cache["df"] = df
+        _live_cache["at"] = datetime.now()
+    return df.copy()
+
+
+def _build_live_data():
     baseline_df = historical_df.copy()
 
     precise_prices = get_precise_gold_price()
@@ -130,9 +144,9 @@ def fetch_live_data():
         end_date = datetime.now() + timedelta(days=1)
 
         if start_date < end_date:
-            gold = yf.download("GC=F", start=start_date, end=end_date)
-            usd  = yf.download("DX-Y.NYB", start=start_date, end=end_date)
-            inr  = yf.download("USDINR=X", start=start_date, end=end_date)
+            gold = yf.download("GC=F", start=start_date, end=end_date, progress=False, timeout=8)
+            usd  = yf.download("DX-Y.NYB", start=start_date, end=end_date, progress=False, timeout=8)
+            inr  = yf.download("USDINR=X", start=start_date, end=end_date, progress=False, timeout=8)
 
             def get_close(df):
                 if 'Close' in df:
