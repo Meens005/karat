@@ -124,16 +124,9 @@ def get_precise_gold_price():
 _live_cache = {"df": None, "at": None}
 
 def fetch_live_data():
-    """Cached wrapper: Yahoo/AKGSMA are slow on Render, so refresh at most every 30 min."""
-    if _live_cache["df"] is not None and _live_cache["at"] is not None:
-        if (datetime.now() - _live_cache["at"]).total_seconds() < 1800:
-            return _live_cache["df"].copy()
-    df = _build_live_data()
-    if df is not None and len(df) >= 60:
-        _live_cache["df"] = df
-        _live_cache["at"] = datetime.now()
-    return df.copy()
-
+    cols = ['Gold_Close','USD_Close','avg_sentiment','news_count',
+            'Gold_7day_MA','Gold_30day_MA','USD_7day_MA']
+    return historical_df[cols].dropna().tail(60)
 
 def _build_live_data():
     baseline_df = historical_df.copy()
