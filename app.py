@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timedelta
 import random
+import threading
+import tensorflow as tf
 from pydantic import BaseModel
 
 # ==============================
@@ -262,49 +264,71 @@ def predict(days_ahead: int = 1):
     if not (1 <= days_ahead <= 60):
         raise HTTPException(status_code=400, detail="Invalid days")
 
-    df = fetch_live_data()
-
-    if len(df) < 60:
-        raise HTTPException(status_code=500, detail="Not enough data")
-
-    cols = ['Gold_Close', 'USD_Close', 'avg_sentiment',
-            'news_count', 'Gold_7day_MA', 'Gold_30day_MA', 'USD_7day_MA']
-
-    current_df = df[cols].copy()
-    preds = []
-
-    for _ in range(days_ahead):
-        last_60 = current_df.tail(60).values
-
-        # Use feature_scaler for input scaling
-        scaled = feature_scaler.transform(last_60)
-        X = scaled.reshape(1, 60, 7).astype('float32')
-
-        # Predict (scaled)
-        pred_scaled = model(X, training=False).numpy()
-
-        # Use gold_scaler for inverse transform
-        pred_price = gold_scaler.inverse_transform(pred_scaled)[0][0]
-        preds.append(float(pred_price))
-
-        # Append predicted row for multi-day prediction
-        last_row = current_df.iloc[-1]
-        new_row = [pred_price, last_row['USD_Close'], last_row['avg_sentiment'],
-                   last_row['news_count'], 0, 0, 0]
-        new_df = pd.DataFrame([new_row], columns=cols)
-        current_df = pd.concat([current_df, new_df], ignore_index=True)
-
-        # Recalculate MAs
-        current_df.loc[current_df.index[-1], 'Gold_7day_MA']  = current_df['Gold_Close'].tail(7).mean()
-        current_df.loc[current_df.index[-1], 'Gold_30day_MA'] = current_df['Gold_Close'].tail(30).mean()
-        current_df.loc[current_df.index[-1], 'USD_7day_MA']   = current_df['USD_Close'].tail(7).mean()
-
-        current_df = current_df.tail(60)
+    try:
+        preds = get_forecast()[:days_ahead]
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     return {
         "predictions_10g": [round(p, 2) for p in preds],
         "predictions_pavan": [round(p * 0.8 * 0.916, 2) for p in preds]
     }
+
+
+# ==============================
+# FORECAST (computed once for all 60 days, then sliced per request)
+# ==============================
+_FEATURE_COLS = ['Gold_Close', 'USD_Close', 'avg_sentiment',
+                 'news_count', 'Gold_7day_MA', 'Gold_30day_MA', 'USD_7day_MA']
+_forecast_cache = {"preds": None, "at": None}
+_forecast_lock = threading.Lock()
+_fast_model = tf.function(lambda x: model(x, training=False)) if model is not None else None
+
+
+def _compute_forecast(days=60):
+    df = fetch_live_data()
+    if len(df) < 60:
+        raise ValueError("Not enough data")
+
+    arr = df[_FEATURE_COLS].values.astype('float64')[-60:]
+    preds = []
+    for _ in range(days):
+        scaled = feature_scaler.transform(pd.DataFrame(arr, columns=_FEATURE_COLS))
+        X = scaled.reshape(1, 60, 7).astype('float32')
+        pred_scaled = _fast_model(X).numpy()
+        pred_price = float(gold_scaler.inverse_transform(pred_scaled)[0][0])
+        preds.append(pred_price)
+
+        last = arr[-1]
+        arr = np.vstack([arr, [pred_price, last[1], last[2], last[3], 0, 0, 0]])
+        arr[-1, 4] = arr[-7:, 0].mean()
+        arr[-1, 5] = arr[-30:, 0].mean()
+        arr[-1, 6] = arr[-7:, 1].mean()
+        arr = arr[-60:]
+    return preds
+
+
+def get_forecast():
+    """Return the cached 60-day forecast (refreshed every 30 min)."""
+    with _forecast_lock:
+        c = _forecast_cache
+        if c["preds"] is not None and (datetime.now() - c["at"]).total_seconds() < 1800:
+            return c["preds"]
+        preds = _compute_forecast(60)
+        c["preds"], c["at"] = preds, datetime.now()
+        return preds
+
+
+def _warm_forecast():
+    try:
+        get_forecast()
+        print("[WARM] Forecast cache ready")
+    except Exception as e:
+        print(f"[WARM] Failed: {e}")
+
+
+if model is not None:
+    threading.Thread(target=_warm_forecast, daemon=True).start()
 
 
 if __name__ == "__main__":
